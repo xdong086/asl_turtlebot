@@ -851,6 +851,90 @@
       <pose frame=''>3.55 1.4 0.0 0.0 0.0 3.14159</pose>
     </model>
 
+    <model name='apple'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.3 0.001 0.3</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.3 0.001 0.3</size>
+            </box>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://project_materials/materials/scripts</uri>
+              <uri>model://project_materials/materials/textures</uri>
+              <name>pm/apple</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+      <pose frame=''>2.97 0.568 0.48 0.0 0.0 3.14159</pose>
+    </model>
+
+    <model name='donut'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.3 0.001 0.3</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.3 0.001 0.3</size>
+            </box>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://project_materials/materials/scripts</uri>
+              <uri>model://project_materials/materials/textures</uri>
+              <name>pm/donut</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+      <pose frame=''>2.22 1.338 0.48 0.0 0.0 3.14159</pose>
+    </model>
+
+    <model name='hotdog'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.3 0.001 0.3</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.3 0.001 0.3</size>
+            </box>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://project_materials/materials/scripts</uri>
+              <uri>model://project_materials/materials/textures</uri>
+              <name>pm/hotdog</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+      <pose frame=''>1.495 2.653 0.48 0.0 0.0 1.57</pose>
+    </model>
+
     <model name='flag'>
       <link name='plate'>
         <pose>0 0 0.2425 0 0 0</pose>
@@ -1025,7 +1109,7 @@
       <real_time_update_rate>1000</real_time_update_rate>
     </physics>
     <scene>
-      <ambient>0.4 0.4 0.4 1</ambient>
+      <ambient>0.6 0.6 0.6 1</ambient>
       <background>0.7 0.7 0.7 1</background>
       <shadows>1</shadows>
     </scene>
