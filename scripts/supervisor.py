@@ -3,21 +3,19 @@
 from enum import Enum
 
 import rospy
-from asl_turtlebot.msg import DetectedObject
+from asl_turtlebot.msg import DetectedObject, DetectedObjectList
 from gazebo_msgs.msg import ModelStates
 from geometry_msgs.msg import Twist, PoseArray, Pose2D, PoseStamped
 from std_msgs.msg import Float32MultiArray, String
+from localization import create_transform_msg
 import tf
+import tf2_ros
+import numpy as np
 
 class Mode(Enum):
     """State machine modes. Feel free to change."""
-    IDLE = 1
-    POSE = 2
-    STOP = 3
-    CROSS = 4
-    NAV = 5
-    MANUAL = 6
-
+    EXPLORE = 1
+    IDLE = 2 
 
 class SupervisorParams:
 
@@ -26,8 +24,10 @@ class SupervisorParams:
         # /gazebo/model_states. Otherwise, we will use a TF lookup.
         self.use_gazebo = rospy.get_param("sim")
 
+        '''
         # How is nav_cmd being decided -- human manually setting it, or rviz
         self.rviz = rospy.get_param("rviz")
+        '''
 
         # If using gmapping, we will have a map frame. Otherwise, it will be odom frame.
         self.mapping = rospy.get_param("map")
@@ -48,7 +48,9 @@ class SupervisorParams:
         if verbose:
             print("SupervisorParams:")
             print("    use_gazebo = {}".format(self.use_gazebo))
+            '''
             print("    rviz = {}".format(self.rviz))
+            '''
             print("    mapping = {}".format(self.mapping))
             print("    pos_eps, theta_eps = {}, {}".format(self.pos_eps, self.theta_eps))
             print("    stop_time, stop_min_dist, crossing_time = {}, {}, {}".format(self.stop_time, self.stop_min_dist, self.crossing_time))
@@ -65,28 +67,34 @@ class Supervisor:
         self.x = 0
         self.y = 0
         self.theta = 0
-
+        
+        # Food object names
+        self.valid_food_names = {"hot_dog", "apple", "donut"}
+        # Explore waypoints list
+        self.explore_waypoints = [(3.39, 2.78, 1.62), (0.66, 2.77, -3.12), (0.32, 2.22, -2.08), (0.29, 1.65, -0.2), (0.31, 0.37, -0.06), (2.27, 0.33, -3.0), (2.30, 1.62, -3.12), (3.35, 0.30, 1.63), (3.09, 1.38, -1.56)]
+        self.next_waypoint_index = 0
         # Goal state
-        self.x_g = 0
-        self.y_g = 0
-        self.theta_g = 0
+        self.x_g, self.y_g, self.theta_g = self.explore_waypoints[self.next_waypoint_index]
 
         # Current mode
-        self.mode = Mode.IDLE
+        self.mode = Mode.EXPLORE
         self.prev_mode = None  # For printing purposes
+
+        self.tfBroadcaster = tf2_ros.TransformBroadcaster()
 
         ########## PUBLISHERS ##########
 
         # Command pose for controller
-        self.pose_goal_publisher = rospy.Publisher('/cmd_pose', Pose2D, queue_size=10)
+        self.pose_goal_publisher = rospy.Publisher('/cmd_nav', Pose2D, queue_size=10)
 
         # Command vel (used for idling)
         self.cmd_vel_publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
 
         ########## SUBSCRIBERS ##########
 
-        # Stop sign detector
-        rospy.Subscriber('/detector/stop_sign', DetectedObject, self.stop_sign_detected_callback)
+
+        # Object detector
+        rospy.Subscriber('/detector/objects', DetectedObjectList, self.object_detected_callback)
 
         # High-level navigation pose
         rospy.Subscriber('/nav_pose', Pose2D, self.nav_pose_callback)
@@ -96,13 +104,14 @@ class Supervisor:
             rospy.Subscriber('/gazebo/model_states', ModelStates, self.gazebo_callback)
         self.trans_listener = tf.TransformListener()
 
+        '''
         # If using rviz, we can subscribe to nav goal click
         if self.params.rviz:
             rospy.Subscriber('/move_base_simple/goal', PoseStamped, self.rviz_goal_callback)
         else:
             self.x_g, self.y_g, self.theta_g = 1.5, -4., 0.
             self.mode = Mode.NAV
-        
+        '''
 
     ########## SUBSCRIBER CALLBACKS ##########
 
@@ -135,26 +144,29 @@ class Supervisor:
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             pass
 
-        self.mode = Mode.NAV
+        self.mode = Mode.EXPLORE
 
     def nav_pose_callback(self, msg):
         self.x_g = msg.x
         self.y_g = msg.y
         self.theta_g = msg.theta
-        self.mode = Mode.NAV
+        self.mode = Mode.EXPLORE
 
-    def stop_sign_detected_callback(self, msg):
-        """ callback for when the detector has found a stop sign. Note that
-        a distance of 0 can mean that the lidar did not pickup the stop sign at all """
-
-        # distance of the stop sign
-        dist = msg.distance
-
-        # if close enough and in nav mode, stop
-        if dist > 0 and dist < self.params.stop_min_dist and self.mode == Mode.NAV:
-            self.init_stop_sign()
-
-
+    def object_detected_callback(self, msg):
+        for ob_msg in msg.ob_msgs:
+            rospy.loginfo("%s object detected", ob_msg.name)
+            if ob_msg.name in self.valid_food_names:
+                food_heading = np.arctan2(np.sin(ob_msg.thetaleft) + np.sin(ob_msg.thetaright), np.cos(ob_msg.thetaleft) + np.cos(ob_msg.thetaright))
+                food_heading_x = ob_msg.distance * np.cos(food_heading)
+                food_heading_y = ob_msg.distance * np.sin(food_heading)
+                rospy.loginfo("%s food: %s, %s, %s", ob_msg.name, ob_msg.distance, food_heading_x, food_heading_y)
+                rospy.loginfo("%s food head: %s, %s, %s", ob_msg.name, food_heading, ob_msg.thetaleft, ob_msg.thetaright)
+                self.tfBroadcaster.sendTransform(create_transform_msg(
+                    (food_heading_x, food_heading_y, 0),
+                    (0, 0, 0, 1),
+                    ob_msg.name, "base_camera",  rospy.Time.now())
+                )
+    
     ########## STATE MACHINE ACTIONS ##########
 
     ########## Code starts here ##########
@@ -194,30 +206,6 @@ class Supervisor:
                abs(y - self.y) < self.params.pos_eps and \
                abs(theta - self.theta) < self.params.theta_eps
 
-    def init_stop_sign(self):
-        """ initiates a stop sign maneuver """
-
-        self.stop_sign_start = rospy.get_rostime()
-        self.mode = Mode.STOP
-
-    def has_stopped(self):
-        """ checks if stop sign maneuver is over """
-
-        return self.mode == Mode.STOP and \
-               rospy.get_rostime() - self.stop_sign_start > rospy.Duration.from_sec(self.params.stop_time)
-
-    def init_crossing(self):
-        """ initiates an intersection crossing maneuver """
-
-        self.cross_start = rospy.get_rostime()
-        self.mode = Mode.CROSS
-
-    def has_crossed(self):
-        """ checks if crossing maneuver is over """
-
-        return self.mode == Mode.CROSS and \
-               rospy.get_rostime() - self.cross_start > rospy.Duration.from_sec(self.params.crossing_time)
-
     ########## Code ends here ##########
 
 
@@ -227,7 +215,6 @@ class Supervisor:
         """ the main loop of the robot. At each iteration, depending on its
         mode (i.e. the finite state machine's state), if takes appropriate
         actions. This function shouldn't return anything """
-
         if not self.params.use_gazebo:
             try:
                 origin_frame = "/map" if self.params.mapping else "/odom"
@@ -249,28 +236,14 @@ class Supervisor:
         if self.mode == Mode.IDLE:
             # Send zero velocity
             self.stay_idle()
-
-        elif self.mode == Mode.POSE:
-            # Moving towards a desired pose
+        elif self.mode == Mode.EXPLORE:
             if self.close_to(self.x_g, self.y_g, self.theta_g):
-                self.mode = Mode.IDLE
-            else:
-                self.go_to_pose()
-
-        elif self.mode == Mode.STOP:
-            # At a stop sign
-            self.nav_to_pose()
-
-        elif self.mode == Mode.CROSS:
-            # Crossing an intersection
-            self.nav_to_pose()
-
-        elif self.mode == Mode.NAV:
-            if self.close_to(self.x_g, self.y_g, self.theta_g):
-                self.mode = Mode.IDLE
+                self.next_waypoint_index += 1
+            self.x_g, self.y_g, self.theta_g = self.explore_waypoints[self.next_waypoint_index]
+            if self.next_waypoint_index == len(self.explore_waypoints):
+                self.mode == Mode.IDLE
             else:
                 self.nav_to_pose()
-
         else:
             raise Exception("This mode is not supported: {}".format(str(self.mode)))
 

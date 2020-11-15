@@ -65,8 +65,10 @@
 
   <node pkg="asl_turtlebot" type="goal_commander.py" name="goal_commander" />
   <node pkg="asl_turtlebot" type="detector_mobilenet.py" name="turtlebot_detector" output="screen" />
-  <!--node pkg="asl_turtlebot" type="navigator.py" name="turtlebot_navigator" output="screen" /-->
-  <node pkg="asl_turtlebot" type="turtlebot3_teleop_key.py" name="turtlebot_teleop" output="screen"  />
+  <node pkg="asl_turtlebot" type="navigator.py" name="turtlebot_navigator" output="screen" />
+  <node pkg="asl_turtlebot" type="supervisor.py" name="turtlebot_supervisor" output="screen" />
+
+  <!--node pkg="asl_turtlebot" type="turtlebot3_teleop_key.py" name="turtlebot_teleop" output="screen"  /-->
 
   <node name="rviz" pkg="rviz" type="rviz" args="-d $(find asl_turtlebot)/rviz/project_sim.rviz"/>
 </launch>

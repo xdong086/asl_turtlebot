@@ -73,7 +73,7 @@ class Navigator:
         self.start_pos_thresh = 0.2     # threshold to be far enough into the plan to recompute it
 
         # threshold at which navigator switches from trajectory to pose control
-        self.near_thresh = 0.2
+        self.near_thresh = 0.1
         self.at_thresh = 0.02
         self.at_thresh_theta = 0.05
 
