@@ -58,17 +58,18 @@ class TrajectoryTracker:
         x_d, xd_d, xdd_d, y_d, yd_d, ydd_d = self.get_desired_state(t)
 
         ########## Code starts here ##########
-        if abs(self.V_prev) < V_PREV_THRES:
-            self.V_prev = np.sqrt(xd_d ** 2 + yd_d ** 2)
-        dx = self.V_prev * np.cos(th)
-        dy = self.V_prev * np.sin(th)
-        u1 = xdd_d + self.kpx * (x_d - x) + self.kdx * (xd_d - dx)
-        u2 = ydd_d + self.kpy * (y_d - y) + self.kdy * (yd_d - dy)
-        a = np.cos(th) * u1 + np.sin(th) * u2 
-        om = (np.cos(th) * u2 - np.sin(th) * u1) / self.V_prev
-        V = self.V_prev + a * dt
-        if abs(V) < V_PREV_THRES:
-            V = np.sqrt(xd_d ** 2 + yd_d ** 2)
+        V = self.V_prev
+        xd = V*np.cos(th)
+        yd = V*np.sin(th)
+        u1 = xdd_d + self.kpx*(x_d-x)+self.kdx*(xd_d-xd)
+        u2 = ydd_d + self.kpy * (y_d - y) + self.kdy*(yd_d -yd)
+        J = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
+        U = np.array([u1, u2]).T
+        X = np.linalg.solve(J, U)
+        V = X[0]*dt+V
+        if (V<V_PREV_THRES):
+            V = np.sign(V) * V_PREV_THRES
+        om = X[1] / self.V_prev
         ########## Code ends here ##########
 
         # apply control limits

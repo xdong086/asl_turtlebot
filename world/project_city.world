@@ -876,7 +876,7 @@
           </material>
         </visual>
       </link>
-      <pose frame=''>0.200 0.054 0.48 0.0 0.0 3.14159</pose>
+      <pose frame=''>0.200 0.1 0.48 0.0 0.0 3.14159</pose>
     </model>
 
     <model name='donut'>
@@ -904,7 +904,7 @@
           </material>
         </visual>
       </link>
-      <pose frame=''>2.22 1.338 0.48 0.0 0.0 3.14159</pose>
+      <pose frame=''>2.05 2.0 0.48 0.0 0.0 0.869 </pose>
     </model>
 
     <model name='hotdog'>
@@ -932,7 +932,7 @@
           </material>
         </visual>
       </link>
-      <pose frame=''>1.495 2.753 0.48 0.0 0.0 1.57</pose>
+      <pose frame=''>2.30 0.1 0.48 0.0 0.0 3.14</pose>
     </model>
 
     <model name='flag'>

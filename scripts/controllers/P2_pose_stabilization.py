@@ -45,30 +45,48 @@ class PoseController:
         """
         ########## Code starts here ##########
 
-        dx = self.x_g - x
-        dy = self.y_g - y
-        phi = np.sqrt(dx**2 + dy**2)
-        p_head = np.arctan2(dy, dx)
-        alpha = wrapToPi(p_head - th)
-        gamma = wrapToPi(p_head - self.th_g)
-        V = self.k1 * phi * np.cos(alpha)
-        om = self.k2 * alpha + self.k1 * np.sinc(alpha/np.pi) * np.cos(alpha) * (alpha + self.k3 * gamma)
+        # dx = self.x_g - x
+        # dy = self.y_g - y
+        # phi = np.sqrt(dx**2 + dy**2)
+        # p_head = np.arctan2(dy, dx)
+        # alpha = wrapToPi(p_head - th)
+        # gamma = wrapToPi(p_head - self.th_g)
+        # V = self.k1 * phi * np.cos(alpha)
+        # om = self.k2 * alpha + self.k1 * np.sinc(alpha/np.pi) * np.cos(alpha) * (alpha + self.k3 * gamma)
+        # ########## Code ends here ##########
+        # """change gamma and phi to rho and delta for publish"""
+        # delta = gamma
+        # rho = phi
+
+        # # apply control limits
+        # V = np.clip(V, -self.V_max, self.V_max)
+        # om = np.clip(om, -self.om_max, self.om_max)
+
+        # alpha_msg = Float64()
+        # alpha_msg.data = alpha
+        # self.pub_alpha.publish(alpha_msg)
+        # delta_msg = Float64()
+        # delta_msg.data = delta
+        # self.pub_delta.publish(delta_msg)
+        # rho_msg = Float64()
+        # rho_msg.data = rho
+        # self.pub_rho.publish(rho_msg)
+
+        xt = x - self.x_g
+        yt = y - self.y_g
+        x = xt * np.cos(self.th_g) + yt * self.th_g * np.sinc(self.th_g/np.pi)
+        y = yt * np.cos(self.th_g) - xt * self.th_g * np.sinc(self.th_g/np.pi)
+        th = th - self.th_g
+
+        rho = np.sqrt(x ** 2 + y ** 2)
+        alpha = wrapToPi(np.arctan2(y, x) - th + np.pi)
+        delta = wrapToPi(alpha + th)
+        V = self.k1 * rho * np.cos(alpha)
+        om = self.k2 * alpha + self.k1 * np.sinc(alpha / np.pi) * np.cos(alpha) * (alpha + self.k3 * delta)
         ########## Code ends here ##########
-        """change gamma and phi to rho and delta for publish"""
-        delta = gamma
-        rho = phi
 
         # apply control limits
         V = np.clip(V, -self.V_max, self.V_max)
         om = np.clip(om, -self.om_max, self.om_max)
-
-        alpha_msg = Float64()
-        alpha_msg.data = alpha
-        self.pub_alpha.publish(alpha_msg)
-        delta_msg = Float64()
-        delta_msg.data = delta
-        self.pub_delta.publish(delta_msg)
-        rho_msg = Float64()
-        rho_msg.data = rho
-        self.pub_rho.publish(rho_msg)
+        
         return V, om

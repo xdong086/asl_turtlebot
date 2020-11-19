@@ -34,10 +34,10 @@ class Navigator:
         rospy.init_node('turtlebot_navigator', anonymous=True)
         self.mode = Mode.IDLE
 
-        # current state
-        self.x = 0.0
-        self.y = 0.0
-        self.theta = 0.0
+        # Current state - todo: woodoo testing
+        self.x = 3.15
+        self.y = 1.6
+        self.theta = 0
 
         # goal state
         self.x_g = None
@@ -65,10 +65,10 @@ class Navigator:
         self.plan_start = [0.,0.]
         
         # Robot limits
-        self.v_max = 0.2    # maximum velocity
+        self.v_max = 0.8   # maximum velocity
         self.om_max = 0.4   # maximum angular velocity
 
-        self.v_des = 0.12   # desired cruising velocity
+        self.v_des = 0.4   # desired cruising velocity
         self.theta_start_thresh = 0.05   # threshold in theta to start moving forward when path-following
         self.start_pos_thresh = 0.2     # threshold to be far enough into the plan to recompute it
 
@@ -121,10 +121,11 @@ class Navigator:
         loads in goal if different from current goal, and replans
         """
         if data.x != self.x_g or data.y != self.y_g or data.theta != self.theta_g:
+            rospy.logerr("Replanning to new goal %s, %s, %s", data.x, data.y, data.theta)
             self.x_g = data.x
             self.y_g = data.y
             self.theta_g = data.theta
-            self.replan()
+            self.replan(True)
 
     def map_md_callback(self, msg):
         """
@@ -246,7 +247,7 @@ class Navigator:
         t = (rospy.get_rostime()-self.current_plan_start_time).to_sec()
         return max(0.0, t)  # clip negative time to 0
 
-    def replan(self):
+    def replan(self, goal_changed = False):
         """
         loads goal into pose controller
         runs planner based on current pose
@@ -271,6 +272,10 @@ class Navigator:
         x_goal = self.snap_to_grid((self.x_g, self.y_g))
         problem = AStar(state_min,state_max,x_init,x_goal,self.occupancy,self.plan_resolution)
 
+        # if not problem.is_free((self.x_g, self.y_g)):
+        #     rospy.loginfo("Planning failed")
+        #     return
+
         rospy.loginfo("Navigator: computing navigation plan")
         success =  problem.solve()
         if not success:
@@ -291,7 +296,7 @@ class Navigator:
         traj_new, t_new = compute_smoothed_traj(planned_path, self.v_des, self.spline_alpha, self.traj_dt)
 
         # If currently tracking a trajectory, check whether new trajectory will take more time to follow
-        if self.mode == Mode.TRACK:
+        if self.mode == Mode.TRACK and False == goal_changed:
             t_remaining_curr = self.current_plan_duration - self.get_current_plan_time()
 
             # Estimate duration of new trajectory
@@ -361,12 +366,21 @@ class Navigator:
                     rospy.loginfo("replanning because out of time")
                     self.replan() # we aren't near the goal but we thought we should have been, so replan
             elif self.mode == Mode.PARK:
-                if self.at_goal():
-                    # forget about goal:
-                    self.x_g = None
-                    self.y_g = None
-                    self.theta_g = None
-                    self.switch_mode(Mode.IDLE)
+                try:
+                    if self.at_goal():
+                        # forget about goal:
+                        self.x_g = None
+                        self.y_g = None
+                        self.theta_g = None
+                        self.switch_mode(Mode.IDLE)
+                except:
+                    rospy.logerr("TypeError in at_goal")
+                    print(self.x)
+                    print(self.y)
+                    print(self.x_g)
+                    print(self.y_g)
+                    print(self.theta)
+                    print(self.theta_g)
 
             self.publish_control()
             rate.sleep()

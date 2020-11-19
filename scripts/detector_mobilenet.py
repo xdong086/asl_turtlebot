@@ -12,6 +12,7 @@ from cv_bridge import CvBridge, CvBridgeError
 import cv2
 import math
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "6"
 # path to the trained conv net
 PATH_TO_MODEL = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../tfmodels/ssd_mobilenet_v1_coco.pb')
 PATH_TO_LABELS = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../tfmodels/coco_labels.txt')

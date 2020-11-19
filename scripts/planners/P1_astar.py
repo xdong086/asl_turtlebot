@@ -1,7 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import signal
 from utils import plot_line_segments
+
 
 class AStar(object):
     """Represents a motion planning problem to be solved using A*"""
@@ -26,6 +28,7 @@ class AStar(object):
         self.est_cost_through[x_init] = self.distance(x_init,x_goal)
 
         self.path = None        # the final path as a list of states
+        self.max_iter = 100000 # max iteration of solve()
 
     def is_free(self, x):
         """
@@ -153,7 +156,10 @@ class AStar(object):
         """
         ########## Code starts here ##########
         self.open_set.add(self.x_init)
-        while(len(self.open_set) > 0):
+
+        gamma = 0.5
+        iter = 0
+        while(len(self.open_set) > 0 and iter < self.max_iter):
             current = self.find_best_est_cost_through()
             if current == self.x_goal:
                 self.path = self.reconstruct_path()
@@ -163,14 +169,15 @@ class AStar(object):
             for neighbor in self.get_neighbors(current):
                 if neighbor in self.closed_set:
                     continue
-                cost_to_arrive = self.cost_to_arrive[current] + self.distance(current, neighbor)
+                cost_to_arrive = self.cost_to_arrive[current] + self.distance(current, neighbor) * gamma
                 if neighbor not in self.open_set:
                     self.open_set.add(neighbor)
                 elif cost_to_arrive > self.cost_to_arrive[neighbor]:
                     continue
                 self.came_from[neighbor] = current
                 self.cost_to_arrive[neighbor] = cost_to_arrive
-                self.est_cost_through[neighbor] = cost_to_arrive + self.distance(neighbor, self.x_goal)
+                self.est_cost_through[neighbor] = cost_to_arrive + self.distance(neighbor, self.x_goal) * gamma
+            iter = iter + 1
         return False
         ########## Code ends here ##########
 
