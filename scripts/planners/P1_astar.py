@@ -28,7 +28,7 @@ class AStar(object):
         self.est_cost_through[x_init] = self.distance(x_init,x_goal)
 
         self.path = None        # the final path as a list of states
-        self.max_iter = 100000 # max iteration of solve()
+        self.max_iter = 10000 # max iteration of solve()
 
     def is_free(self, x):
         """

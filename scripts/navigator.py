@@ -6,6 +6,7 @@ from geometry_msgs.msg import Twist, Pose2D, PoseStamped
 from std_msgs.msg import String
 import tf
 import numpy as np
+import copy
 from numpy import linalg
 from utils import wrapToPi
 from planners import AStar, compute_smoothed_traj
@@ -35,8 +36,8 @@ class Navigator:
         self.mode = Mode.IDLE
 
         # Current state - todo: woodoo testing
-        self.x = 3.15
-        self.y = 1.6
+        self.x = 0
+        self.y = 0
         self.theta = 0
 
         # goal state
@@ -65,8 +66,8 @@ class Navigator:
         self.plan_start = [0.,0.]
         
         # Robot limits
-        self.v_max = 0.8   # maximum velocity
-        self.om_max = 0.4   # maximum angular velocity
+        self.v_max = 0.4   # maximum velocity
+        self.om_max = 0.3   # maximum angular velocity
 
         self.v_des = 0.4   # desired cruising velocity
         self.theta_start_thresh = 0.05   # threshold in theta to start moving forward when path-following
@@ -103,9 +104,12 @@ class Navigator:
 
         self.cfg_srv = Server(NavigatorConfig, self.dyn_cfg_callback)
 
+        self.allowUpdateMap = True
+
         rospy.Subscriber('/map', OccupancyGrid, self.map_callback)
         rospy.Subscriber('/map_metadata', MapMetaData, self.map_md_callback)
         rospy.Subscriber('/cmd_nav', Pose2D, self.cmd_nav_callback)
+        rospy.Subscriber('/finishexplorer', String, self.explorer_map_finish_callback)
 
         print "finished init"
         
@@ -121,11 +125,12 @@ class Navigator:
         loads in goal if different from current goal, and replans
         """
         if data.x != self.x_g or data.y != self.y_g or data.theta != self.theta_g:
-            rospy.logerr("Replanning to new goal %s, %s, %s", data.x, data.y, data.theta)
-            self.x_g = data.x
-            self.y_g = data.y
-            self.theta_g = data.theta
-            self.replan(True)
+            if (self.mode == Mode.IDLE):
+                rospy.logerr("Replanning to new goal %s, %s, %s", data.x, data.y, data.theta)
+                self.x_g = data.x
+                self.y_g = data.y
+                self.theta_g = data.theta
+                self.replan(True)
 
     def map_md_callback(self, msg):
         """
@@ -136,13 +141,41 @@ class Navigator:
         self.map_resolution = msg.resolution
         self.map_origin = (msg.origin.position.x,msg.origin.position.y)
 
+    def explorer_map_finish_callback(self, msg):
+        '''
+        After explorer finish, mark space around obstacles unreachable
+        '''
+        self.allowUpdateMap = False
+        probs = copy.deepcopy(self.map_probs)
+
+        for i in range(self.map_width):
+            for j in range(self.map_height):
+                if self.map_probs[i * self.map_width + j] > 90:
+                    probs[(i-1) * self.map_width + j-1] = 100
+                    probs[(i-1) * self.map_width + j] = 100
+                    probs[(i-1) * self.map_width + j+1] = 100
+                    probs[(i) * self.map_width + j-1] = 100
+                    probs[(i) * self.map_width + j] = 100
+                    probs[(i) * self.map_width + j+1] = 100
+                    probs[(i+1) * self.map_width + j-1] = 100
+                    probs[(i+1) * self.map_width + j] = 100
+                    probs[(i+1) * self.map_width + j+1] = 100
+
+        self.occupancy = StochOccupancyGrid2D(self.map_resolution,
+                                                  self.map_width,
+                                                  self.map_height,
+                                                  self.map_origin[0],
+                                                  self.map_origin[1],
+                                                  8,
+                                                  probs)
+
     def map_callback(self,msg):
         """
         receives new map info and updates the map
         """
         self.map_probs = msg.data
         # if we've received the map metadata and have a way to update it:
-        if self.map_width>0 and self.map_height>0 and len(self.map_probs)>0:
+        if self.map_width>0 and self.map_height>0 and len(self.map_probs)>0 and self.allowUpdateMap:
             self.occupancy = StochOccupancyGrid2D(self.map_resolution,
                                                   self.map_width,
                                                   self.map_height,
@@ -150,7 +183,7 @@ class Navigator:
                                                   self.map_origin[1],
                                                   8,
                                                   self.map_probs)
-            if self.x_g is not None:
+            if self.x_g is not None and (self.mode == Mode.TRACK or self.mode ==Mode.IDLE):
                 # if we have a goal to plan to, replan
                 rospy.loginfo("replanning because of new map")
                 self.replan() # new map, need to replan
@@ -284,6 +317,24 @@ class Navigator:
         rospy.loginfo("Planning Succeeded")
 
         planned_path = problem.path
+        # iter = 0
+        # neighbour = [(-0.05, 0), (0.05, 0), (0, 0.05), (0, -0.05), (0, 0)]
+        # success = False
+        # while success == False and iter < len(neighbour):
+        #     rospy.loginfo("Navigator: computing navigation plan")
+        #     success =  problem.solve()
+        #     if success:
+        #         rospy.loginfo("Planning Succeeded")
+        #         break
+        #     x_goal_n = self.snap_to_grid((self.x_g + neighbour[iter][0], self.y_g + neighbour[iter][1]))
+        #     problem = AStar(state_min,state_max,x_init,x_goal_n,self.occupancy,self.plan_resolution)
+        #     iter = iter + 1
+
+        # if not success:
+        #     rospy.loginfo("Planning failed")
+        #     return
+
+        # planned_path = problem.path
         
 
         # Check whether path is too short

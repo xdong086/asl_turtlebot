@@ -5,6 +5,9 @@ from utils import wrapToPi
 
 """Publisher from section 5 added at the end"""
 # command zero velocities once we are this close to the goal
+# RHO_THRES = 0.01
+# ALPHA_THRES = 0.01
+# DELTA_THRES = 0.01
 RHO_THRES = 0.05
 ALPHA_THRES = 0.1
 DELTA_THRES = 0.1
@@ -71,7 +74,7 @@ class PoseController:
         # rho_msg = Float64()
         # rho_msg.data = rho
         # self.pub_rho.publish(rho_msg)
-
+        rospy.loginfo("self x_g %s self y_g %s self th_g %s", self.x_g, self.y_g, self.th_g)
         xt = x - self.x_g
         yt = y - self.y_g
         x = xt * np.cos(self.th_g) + yt * self.th_g * np.sinc(self.th_g/np.pi)
@@ -83,10 +86,12 @@ class PoseController:
         delta = wrapToPi(alpha + th)
         V = self.k1 * rho * np.cos(alpha)
         om = self.k2 * alpha + self.k1 * np.sinc(alpha / np.pi) * np.cos(alpha) * (alpha + self.k3 * delta)
-        ########## Code ends here ##########
 
         # apply control limits
         V = np.clip(V, -self.V_max, self.V_max)
         om = np.clip(om, -self.om_max, self.om_max)
-        
+
+        #if rho < RHO_THRES and -ALPHA_THRES < alpha < ALPHA_THRES and -DELTA_THRES < delta < DELTA_THRES:
+        #    return 0, 0
+
         return V, om

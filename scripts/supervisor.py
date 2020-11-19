@@ -40,8 +40,8 @@ class SupervisorParams:
         self.mapping = rospy.get_param("map")
 
         # Threshold at which we consider the robot at a location
-        self.pos_eps = rospy.get_param("~pos_eps", 0.15)
-        self.theta_eps = rospy.get_param("~theta_eps", 0.35)
+        self.pos_eps = rospy.get_param("~pos_eps", 0.2)
+        self.theta_eps = rospy.get_param("~theta_eps", 0.4)
 
         # Time to stop at a stop sign
         self.stop_time = rospy.get_param("~stop_time", 3.)
@@ -51,6 +51,7 @@ class SupervisorParams:
 
         # Time taken to cross an intersection
         self.crossing_time = rospy.get_param("~crossing_time", 3.)
+
 
         if verbose:
             print("SupervisorParams:")
@@ -71,33 +72,40 @@ class Supervisor:
         self.params = SupervisorParams(verbose=True)
 
         # Food delivery queue
+        self.itemQueue = Queue.Queue()
         self.orderQueue = Queue.Queue()
+        self.last_order_id = "id"
 
         # PICUP mode timer
         self.pickupTimer = 0
 
-        # Current state - todo: woodoo testing
-        self.x = 3.15
-        self.y = 1.6
+        # Current state
+        self.x = 0
+        self.y = 0
         self.theta = 0
         
         # Food object names
         self.valid_food_names = {"hot_dog": None, "apple": None, "donut": None}
-
+        self.go_to_food_locations = {}
         # For testing phase 2, delete when doing demo
         #self.valid_food_names = {"hot_dog": (2.2851, -0.0211), "apple": (0.0804, 0.0722), "donut": (2.061, 2.1991)}
+        #self.valid_food_names = {"hot_dog": (3.15, 1.0), "apple": (0.4, 0.4), "donut": (2.061, 2.1991)}
+        #self.go_to_food_locations = {"hot_dog": (3.15, 1.0), "apple": (0.4, 0.4), "donut": (2.061, 2.1991)}
 
         # Explore waypoints list
         self.explore_waypoints = [(3.39, 2.78, 1.62), (0.66, 2.77, -3.12), (0.32, 2.22, -2.08), (0.29, 1.65, -2.08), 
                                   (0.31, 0.37, -0.06), (2.27, 0.33, -3.0), (2.30, 1.62, 0), (2.27, 0.4, -2.0), 
                                   (3.35, 0.30, 1.63), (3.09, 1.38, -1.56)]
-        self.next_waypoint_index = 0
+        #self.explore_waypoints = []
+        self.next_waypoint_index = -1
         # Goal state
-        self.x_g, self.y_g, self.theta_g = self.explore_waypoints[self.next_waypoint_index]
+        #self.x_g, self.y_g, self.theta_g = self.explore_waypoints[self.next_waypoint_index]
+        self.x_g = self.y_g = self.theta_g = None
 
         # Current mode
-        self.mode = Mode.EXPLORE
-        self.prev_mode = None  # For printing purposes
+        self.mode = Mode.IDLE
+        #self.switch_mode(Mode.WAIT) #Mode.EXPLORE
+        self.switch_mode(Mode.EXPLORE)
 
         self.tfBroadcaster = tf2_ros.TransformBroadcaster()
 
@@ -111,10 +119,13 @@ class Supervisor:
 
         # Food object marker
         self.food_viz_pub = rospy.Publisher("/viz/food_marker", Marker, queue_size=10)
+
+        # Explorer finish
+        self.explorer_finish_pub = rospy.Publisher("/finishexplorer", String, queue_size=10)
         ########## SUBSCRIBERS ##########
 
         # Listen to order
-        rospy.Subscriber('/order', String , self.order_callback)
+        rospy.Subscriber('/delivery_request', String , self.order_callback)
 
         # Object detector
         rospy.Subscriber('/detector/objects', DetectedObjectList, self.object_detected_callback)
@@ -139,7 +150,18 @@ class Supervisor:
     ########## SUBSCRIBER CALLBACKS ##########
 
     def order_callback(self, msg):
-        self.orderQueue.put(msg.data)
+        items = msg.data.split(",")
+        if items[0] == self.last_order_id:
+            return
+        else:
+            self.last_order_id = items[0]
+            self.orderQueue.put(msg)
+
+    def fill_item_queue(self, order):
+        items = order.data.split(",")
+        for i in set(items[1:]):
+            if i in self.go_to_food_locations:
+                self.itemQueue.put(i)
 
     def gazebo_callback(self, msg):
         if "turtlebot3_burger" not in msg.name:
@@ -170,24 +192,27 @@ class Supervisor:
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
             pass
 
-        self.mode = Mode.EXPLORE
+        self.switch_mode(Mode.EXPLORE)
 
     def nav_pose_callback(self, msg):
         self.x_g = msg.x
         self.y_g = msg.y
         self.theta_g = msg.theta
-        self.mode = Mode.EXPLORE
+        self.switch_mode(Mode.EXPLORE)
 
     def object_detected_callback(self, msg):
         for ob_msg in msg.ob_msgs:
-            rospy.loginfo("%s object detected", ob_msg.name)
+            #rospy.loginfo("%s object detected", ob_msg.name)
             if ob_msg.name in self.valid_food_names:
                 food_heading = np.arctan2(np.sin(ob_msg.thetaleft) + np.sin(ob_msg.thetaright), np.cos(ob_msg.thetaleft) + np.cos(ob_msg.thetaright))
                 food_heading_x = self.x + ob_msg.distance * np.cos(food_heading + self.theta)
                 food_heading_y = self.y + ob_msg.distance * np.sin(food_heading + self.theta)
+                dest_x = self.x + max(ob_msg.distance - 0.25, 0.0) * np.cos(food_heading + self.theta)
+                dest_y = self.y + max(ob_msg.distance - 0.25, 0.0) * np.sin(food_heading + self.theta)
                 rospy.loginfo("%s food: %s, %s, %s", ob_msg.name, ob_msg.distance, food_heading_x, food_heading_y)
                 rospy.loginfo("%s food head: %s, %s, %s", ob_msg.name, food_heading, ob_msg.thetaleft, ob_msg.thetaright)
                 self.valid_food_names[ob_msg.name] = (food_heading_x, food_heading_y)
+                self.go_to_food_locations[ob_msg.name] = (dest_x, dest_y)
     ########## STATE MACHINE ACTIONS ##########
 
     ########## Code starts here ##########
@@ -237,6 +262,10 @@ class Supervisor:
 
 
     ########## STATE MACHINE LOOP ##########
+    def switch_mode(self, new_mode):
+        rospy.loginfo(">>>>>SUPERVISOR: Switching from %s -> %s", self.mode, new_mode)
+        self.prev_mode = new_mode
+        self.mode = new_mode
 
     def loop(self):
         """ the main loop of the robot. At each iteration, depending on its
@@ -257,42 +286,54 @@ class Supervisor:
             self.prev_mode = self.mode
 
         ########## Code starts here ##########
-        # TODO: Currently the state machine will just go to the pose without stopping
-        #       at the stop sign.
+        #print("----------- %s"%(self.mode))
+        #print("----------- %d"%(self.itemQueue.qsize()))
         if self.mode == Mode.IDLE:
             # Send zero velocity
             self.stay_idle()
         elif self.mode == Mode.EXPLORE:
-            if self.close_to(self.x_g, self.y_g, self.theta_g):
+            if self.next_waypoint_index == -1 or self.close_to(self.x_g, self.y_g, self.theta_g):
                 self.next_waypoint_index += 1
-            
-            if self.next_waypoint_index == len(self.explore_waypoints):
-                self.mode = Mode.WAIT
+                if self.next_waypoint_index < len(self.explore_waypoints):
+                    self.x_g, self.y_g, self.theta_g = self.explore_waypoints[self.next_waypoint_index]
+                else:
+                    ef = String()
+                    self.explorer_finish_pub.publish(ef)
+                    self.switch_mode(Mode.WAIT)
             else:
-                self.x_g, self.y_g, self.theta_g = self.explore_waypoints[self.next_waypoint_index]
                 self.nav_to_pose()
         elif self.mode == Mode.WAIT:
             if self.orderQueue.empty():
                 self.stay_wait()
             else:
                 order = self.orderQueue.get()
-                self.x_g, self.y_g = self.valid_food_names[order]
+                self.fill_item_queue(order)
+                item = self.itemQueue.get()
+                self.x_g, self.y_g = self.go_to_food_locations[item]
                 self.theta_g = 0
-                self.mode = Mode.NAVTOVENDER
+                self.switch_mode(Mode.NAVTOVENDER)
         elif self.mode == Mode.NAVTOVENDER:
             if self.close_to(self.x_g, self.y_g, self.theta_g):
-                self.mode = Mode.PICKUP
+                self.switch_mode(Mode.PICKUP)
             else:
                 self.nav_to_pose()
         elif self.mode == Mode.PICKUP:
             # wait for 3 seconds
             self.pickupTimer = self.pickupTimer + 1
             if self.pickupTimer > 30:
-                self.x_g, self.y_g, self.theta_g = (3.09, 1.38, -1.56)
-                self.mode = Mode.NAVTOCUSTOMER
+                if self.itemQueue.empty():
+                    self.x_g, self.y_g, self.theta_g = (3.09, 1.38, -1.56)
+                    self.pickupTimer = 0
+                    self.switch_mode(Mode.NAVTOCUSTOMER)
+                else:
+                    item = self.itemQueue.get()
+                    self.x_g, self.y_g = self.go_to_food_locations[item]
+                    self.theta_g = 0
+                    self.pickupTimer = 0
+                    self.switch_mode(Mode.NAVTOVENDER)
         elif self.mode == Mode.NAVTOCUSTOMER:
             if self.close_to(self.x_g, self.y_g, self.theta_g):
-                self.mode = Mode.WAIT
+                self.switch_mode(Mode.WAIT)
             else:
                 self.nav_to_pose()
         #elif self.node == Mode.FINISHONE:

@@ -23,6 +23,7 @@ class DeliveryRequestPublisher:
             rospy.sleep(s)
     
     def loop(self):
+        global id
         """The main loop of the script. The script will ask for food items to add to the 
         delivery_request string until an empty answer ("") is given, at which point it will 
         publish the string. The current request will be published several few times after which the user 
@@ -30,7 +31,7 @@ class DeliveryRequestPublisher:
         if self.delivery_request is None:
             
             #initialize string of requested items
-            self.delivery_request = ""
+            self.delivery_request = str(id)+","
             request_not_complete = True
             
             #gather requests from user input
@@ -43,6 +44,7 @@ class DeliveryRequestPublisher:
 
             #eliminate trailing comma and publish
             self.delivery_request = self.delivery_request[:-1]
+            id += 1
             print "Order sending..."
             self.publish_request()
 
@@ -51,6 +53,8 @@ class DeliveryRequestPublisher:
             print "\n", "Place another request?"
 
     def run(self):
+        global id
+        id = 0
         print "Create a delivery request:"
         print "You'll be prompted to enter food items one at a time. Once your order list is " \
             "complete, press enter to send your order."
