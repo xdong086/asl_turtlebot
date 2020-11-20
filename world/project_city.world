@@ -876,10 +876,10 @@
           </material>
         </visual>
       </link>
-      <pose frame=''>0.200 0.1 0.48 0.0 0.0 3.14159</pose>
+      <pose frame=''>3.27 2.96 0.48 0.0 0.0 3.14159</pose>
     </model>
 
-    <model name='donut'>
+    <!--model name='donut'>
       <static>1</static>
       <link name='link'>
         <collision name='collision'>
@@ -905,7 +905,7 @@
         </visual>
       </link>
       <pose frame=''>2.05 2.0 0.48 0.0 0.0 0.869 </pose>
-    </model>
+    </model-->
 
     <model name='hotdog'>
       <static>1</static>
@@ -932,10 +932,38 @@
           </material>
         </visual>
       </link>
-      <pose frame=''>2.30 0.1 0.48 0.0 0.0 3.14</pose>
+      <pose frame=''>3.62 0.33 0.48 0.0 0.0 -1.53</pose>
     </model>
 
-    <model name='flag'>
+    <model name='cat'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.3 0.001 0.3</size>
+            </box>
+          </geometry>
+        </collision>
+        <visual name='visual'>
+          <geometry>
+            <box>
+              <size>0.3 0.001 0.3</size>
+            </box>
+          </geometry>
+          <material>
+            <script>
+              <uri>model://project_materials/materials/scripts</uri>
+              <uri>model://project_materials/materials/textures</uri>
+              <name>pm/cat</name>
+            </script>
+          </material>
+        </visual>
+      </link>
+      <pose frame=''>2.25 2.78 0.57 0.0 0.0 1.65 </pose>
+    </model>
+
+    <!--model name='flag'>
       <link name='plate'>
         <pose>0 0 0.2425 0 0 0</pose>
         <collision name='collision'>
@@ -1097,7 +1125,7 @@
         <pose>0 0 0.1 0 0 0</pose>
       </joint>
       <pose frame=''>3.35 1.4 0.01 0.0 0.0 3.14159</pose>
-    </model>
+    </model-->
 
 
     <gravity>0 0 -9.8</gravity>

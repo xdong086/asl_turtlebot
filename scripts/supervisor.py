@@ -23,6 +23,8 @@ class Mode(Enum):
     PICKUP = 5
     NAVTOCUSTOMER = 6
     FINISHONE = 7
+    STOP = 8
+    CROSS = 9
 
 class SupervisorParams:
 
@@ -41,16 +43,7 @@ class SupervisorParams:
 
         # Threshold at which we consider the robot at a location
         self.pos_eps = rospy.get_param("~pos_eps", 0.2)
-        self.theta_eps = rospy.get_param("~theta_eps", 0.4)
-
-        # Time to stop at a stop sign
-        self.stop_time = rospy.get_param("~stop_time", 3.)
-
-        # Minimum distance from a stop sign to obey it
-        self.stop_min_dist = rospy.get_param("~stop_min_dist", 0.5)
-
-        # Time taken to cross an intersection
-        self.crossing_time = rospy.get_param("~crossing_time", 3.)
+        self.theta_eps = rospy.get_param("~theta_eps", 0.5)        
 
 
         if verbose:
@@ -61,8 +54,6 @@ class SupervisorParams:
             '''
             print("    mapping = {}".format(self.mapping))
             print("    pos_eps, theta_eps = {}, {}".format(self.pos_eps, self.theta_eps))
-            print("    stop_time, stop_min_dist, crossing_time = {}, {}, {}".format(self.stop_time, self.stop_min_dist, self.crossing_time))
-
 
 class Supervisor:
 
@@ -80,22 +71,23 @@ class Supervisor:
         self.pickupTimer = 0
 
         # Current state
-        self.x = 0
-        self.y = 0
+        self.x = 3.15
+        self.y = 1.6
         self.theta = 0
         
         # Food object names
         self.valid_food_names = {"hot_dog": None, "apple": None, "donut": None}
         self.go_to_food_locations = {}
+        self.last_updated = None
         # For testing phase 2, delete when doing demo
         #self.valid_food_names = {"hot_dog": (2.2851, -0.0211), "apple": (0.0804, 0.0722), "donut": (2.061, 2.1991)}
         #self.valid_food_names = {"hot_dog": (3.15, 1.0), "apple": (0.4, 0.4), "donut": (2.061, 2.1991)}
-        #self.go_to_food_locations = {"hot_dog": (3.15, 1.0), "apple": (0.4, 0.4), "donut": (2.061, 2.1991)}
+        #self.go_to_food_locations = {"hot_dog": (3.39, 2.78), "apple": (3.35, 0.30), "donut": (3.35, 0.30)}
 
         # Explore waypoints list
-        self.explore_waypoints = [(3.39, 2.78, 1.62), (0.66, 2.77, -3.12), (0.32, 2.22, -2.08), (0.29, 1.65, -2.08), 
-                                  (0.31, 0.37, -0.06), (2.27, 0.33, -3.0), (2.30, 1.62, 0), (2.27, 0.4, -2.0), 
-                                  (3.35, 0.30, 1.63), (3.09, 1.38, -1.56)]
+        self.explore_waypoints = [(3.39, 2.78, 1.62), (0.61, 2.77, -3.12), (0.32, 2.22, -2.08), (0.25, 1.65, -2.08), 
+                                   (0.25, 0.37, -0.06), (2.27, 0.33, -3.0), (2.30, 1.62, 0), (2.27, 0.4, -2.0), 
+                                   (3.35, 0.30, 1.63), (3.09, 1.38, -1.56)]
         #self.explore_waypoints = []
         self.next_waypoint_index = -1
         # Goal state
@@ -122,6 +114,8 @@ class Supervisor:
 
         # Explorer finish
         self.explorer_finish_pub = rospy.Publisher("/finishexplorer", String, queue_size=10)
+
+        self.cat_pub = rospy.Publisher('/cat', DetectedObject, queue_size=10)
         ########## SUBSCRIBERS ##########
 
         # Listen to order
@@ -159,9 +153,17 @@ class Supervisor:
 
     def fill_item_queue(self, order):
         items = order.data.split(",")
+        seen = []
+        for i in items[1:]:
+            if i not in seen and i in self.go_to_food_locations:
+                print("will get",i)
+                self.itemQueue.put(i)
+                seen.append(i)
+        """
         for i in set(items[1:]):
             if i in self.go_to_food_locations:
                 self.itemQueue.put(i)
+        """
 
     def gazebo_callback(self, msg):
         if "turtlebot3_burger" not in msg.name:
@@ -203,16 +205,24 @@ class Supervisor:
     def object_detected_callback(self, msg):
         for ob_msg in msg.ob_msgs:
             #rospy.loginfo("%s object detected", ob_msg.name)
-            if ob_msg.name in self.valid_food_names:
+            if ob_msg.name == "cat":
+                self.cat_pub.publish(ob_msg)
+            # TODO
+            if ob_msg.name in self.valid_food_names and \
+                ob_msg.distance < 1.5 and \
+               (ob_msg.name not in self.go_to_food_locations or \
+                self.last_updated == ob_msg.name):
                 food_heading = np.arctan2(np.sin(ob_msg.thetaleft) + np.sin(ob_msg.thetaright), np.cos(ob_msg.thetaleft) + np.cos(ob_msg.thetaright))
                 food_heading_x = self.x + ob_msg.distance * np.cos(food_heading + self.theta)
                 food_heading_y = self.y + ob_msg.distance * np.sin(food_heading + self.theta)
-                dest_x = self.x + max(ob_msg.distance - 0.25, 0.0) * np.cos(food_heading + self.theta)
-                dest_y = self.y + max(ob_msg.distance - 0.25, 0.0) * np.sin(food_heading + self.theta)
+                dest_x = self.x + max(max(ob_msg.distance, 0.0) * np.cos(food_heading + self.theta) - 0.2, 0)
+                dest_y = self.y + max(max(ob_msg.distance, 0.0) * np.sin(food_heading + self.theta) - 0.2, 0)
                 rospy.loginfo("%s food: %s, %s, %s", ob_msg.name, ob_msg.distance, food_heading_x, food_heading_y)
                 rospy.loginfo("%s food head: %s, %s, %s", ob_msg.name, food_heading, ob_msg.thetaleft, ob_msg.thetaright)
                 self.valid_food_names[ob_msg.name] = (food_heading_x, food_heading_y)
                 self.go_to_food_locations[ob_msg.name] = (dest_x, dest_y)
+                self.last_updated = ob_msg.name
+
     ########## STATE MACHINE ACTIONS ##########
 
     ########## Code starts here ##########
@@ -253,11 +263,14 @@ class Supervisor:
 
     def close_to(self, x, y, theta):
         """ checks if the robot is at a pose within some threshold """
-
+        #rospy.loginfo("%s, %s, %s, %s ,%s, %s", x, self.x, y, self.y, theta, self.theta)
+        deltaTheta = abs(theta - self.theta)
+        if deltaTheta > 3.14:
+            deltaTheta = 2*3.14 - deltaTheta
+        
         return abs(x - self.x) < self.params.pos_eps and \
                abs(y - self.y) < self.params.pos_eps and \
-               abs(theta - self.theta) < self.params.theta_eps
-
+               deltaTheta < self.params.theta_eps
     ########## Code ends here ##########
 
 
@@ -284,21 +297,20 @@ class Supervisor:
         if self.prev_mode != self.mode:
             rospy.loginfo("Current mode: %s", self.mode)
             self.prev_mode = self.mode
-
+        rospy.loginfo("Current mode: %s, %s, %s", self.mode, self.x_g, self.y_g)
         ########## Code starts here ##########
         #print("----------- %s"%(self.mode))
         #print("----------- %d"%(self.itemQueue.qsize()))
         if self.mode == Mode.IDLE:
-            # Send zero velocity
             self.stay_idle()
+
         elif self.mode == Mode.EXPLORE:
             if self.next_waypoint_index == -1 or self.close_to(self.x_g, self.y_g, self.theta_g):
                 self.next_waypoint_index += 1
                 if self.next_waypoint_index < len(self.explore_waypoints):
                     self.x_g, self.y_g, self.theta_g = self.explore_waypoints[self.next_waypoint_index]
+                    self.nav_to_pose()
                 else:
-                    ef = String()
-                    self.explorer_finish_pub.publish(ef)
                     self.switch_mode(Mode.WAIT)
             else:
                 self.nav_to_pose()
@@ -319,8 +331,10 @@ class Supervisor:
                 self.nav_to_pose()
         elif self.mode == Mode.PICKUP:
             # wait for 3 seconds
-            self.pickupTimer = self.pickupTimer + 1
-            if self.pickupTimer > 30:
+            if self.pickupTimer == 0:
+                self.pickupTimer = rospy.get_rostime()
+            #self.pickupTimer = self.pickupTimer + 1
+            if (rospy.get_rostime()-self.pickupTimer).to_sec() > 10:
                 if self.itemQueue.empty():
                     self.x_g, self.y_g, self.theta_g = (3.09, 1.38, -1.56)
                     self.pickupTimer = 0
@@ -347,6 +361,12 @@ class Supervisor:
         for i, food_name in enumerate(self.valid_food_names):
             if self.valid_food_names[food_name]:
                 self.publish_food_marker(food_name, i, self.valid_food_names[food_name])
+        """
+
+        for i, food_name in enumerate(self.go_to_food_locations):
+            if self.go_to_food_locations[food_name]:
+                self.publish_food_marker("@"+food_name[0], i, self.go_to_food_locations[food_name])        
+        """
         ############ Code ends here ############
 
     def run(self):

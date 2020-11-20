@@ -18,7 +18,6 @@ class TrajectoryTracker:
                                   # returned by the differential flatness code
 
     def reset(self):
-        #self.V_prev = V_PREV_THRES
         self.V_prev = 0
         self.om_prev = 0
         self.t_prev = 0
@@ -68,8 +67,7 @@ class TrajectoryTracker:
         U = np.array([u1, u2]).T
         X = np.linalg.solve(J, U)
         V = X[0]*dt+V
-        #if abs(V)<V_PREV_THRES:
-        if (V<V_PREV_THRES):
+        if (abs(V)<V_PREV_THRES):
             V = np.sign(V) * V_PREV_THRES
         om = X[1] / self.V_prev
         ########## Code ends here ##########

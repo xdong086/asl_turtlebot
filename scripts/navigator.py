@@ -15,6 +15,7 @@ import scipy.interpolate
 import matplotlib.pyplot as plt
 from controllers import PoseController, TrajectoryTracker, HeadingController
 from enum import Enum
+from asl_turtlebot.msg import DetectedObject, DetectedObjectList
 
 from dynamic_reconfigure.server import Server
 from asl_turtlebot.cfg import NavigatorConfig
@@ -25,6 +26,8 @@ class Mode(Enum):
     ALIGN = 1
     TRACK = 2
     PARK = 3
+    STOP = 4
+    CROSS = 5
 
 class Navigator:
     """
@@ -34,6 +37,7 @@ class Navigator:
     def __init__(self):
         rospy.init_node('turtlebot_navigator', anonymous=True)
         self.mode = Mode.IDLE
+        self.lastPlanSuccess = False
 
         # Current state - todo: woodoo testing
         self.x = 0
@@ -66,12 +70,12 @@ class Navigator:
         self.plan_start = [0.,0.]
         
         # Robot limits
-        self.v_max = 0.4   # maximum velocity
-        self.om_max = 0.3   # maximum angular velocity
+        self.v_max = 0.2   # maximum velocity
+        self.om_max = 0.4   # maximum angular velocity
 
-        self.v_des = 0.4   # desired cruising velocity
-        self.theta_start_thresh = 0.05   # threshold in theta to start moving forward when path-following
-        self.start_pos_thresh = 0.2     # threshold to be far enough into the plan to recompute it
+        self.v_des = 0.1  # desired cruising velocity
+        self.theta_start_thresh = 0.1   # threshold in theta to start moving forward when path-following
+        self.start_pos_thresh = 0.1     # threshold to be far enough into the plan to recompute it
 
         # threshold at which navigator switches from trajectory to pose control
         self.near_thresh = 0.1
@@ -80,7 +84,7 @@ class Navigator:
 
         # trajectory smoothing
         self.spline_alpha = 0.15
-        self.traj_dt = 0.1
+        self.traj_dt = 0.05
 
         # trajectory tracking controller parameters
         self.kpx = 0.5
@@ -89,16 +93,26 @@ class Navigator:
         self.kdy = 1.5
 
         # heading controller parameters
-        self.kp_th = 2.
+        self.kp_th = 2
+
+        # Time to stop at a stop sign
+        self.stop_time = 5. #rospy.get_param("~stop_time", 3.)
+        self.crossing_time = 30. #rospy.get_param("~crossing_time", 3.)
+        self.stopTime = 0
+        self.currentStopStartTime = 0
+        self.crossTime = 0
+        self.currentCrossStartTime = 0
+
 
         self.traj_controller = TrajectoryTracker(self.kpx, self.kpy, self.kdx, self.kdy, self.v_max, self.om_max)
-        self.pose_controller = PoseController(0., 0., 0., self.v_max, self.om_max)
+        self.pose_controller = PoseController(0.2, 0.2, 0.2, self.v_max, self.om_max)
         self.heading_controller = HeadingController(self.kp_th, self.om_max)
 
         self.nav_planned_path_pub = rospy.Publisher('/planned_path', Path, queue_size=10)
         self.nav_smoothed_path_pub = rospy.Publisher('/cmd_smoothed_path', Path, queue_size=10)
         self.nav_smoothed_path_rej_pub = rospy.Publisher('/cmd_smoothed_path_rejected', Path, queue_size=10)
         self.nav_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+
 
         self.trans_listener = tf.TransformListener()
 
@@ -109,7 +123,8 @@ class Navigator:
         rospy.Subscriber('/map', OccupancyGrid, self.map_callback)
         rospy.Subscriber('/map_metadata', MapMetaData, self.map_md_callback)
         rospy.Subscriber('/cmd_nav', Pose2D, self.cmd_nav_callback)
-        rospy.Subscriber('/finishexplorer', String, self.explorer_map_finish_callback)
+        rospy.Subscriber('/cat', DetectedObject, self.cat_detected_callback)
+        #rospy.Subscriber('/finishexplorer', String, self.explorer_map_finish_callback)
 
         print "finished init"
         
@@ -120,17 +135,33 @@ class Navigator:
         self.pose_controller.k3 = config["k3"]
         return config
 
+    def cat_detected_callback(self, msg):
+        if self.currentCrossStartTime != 0 and (rospy.get_rostime() - self.currentCrossStartTime).to_sec() < self.crossing_time:
+            return
+        dist_s = msg.distance
+        if dist_s > 0 and self.mode == Mode.TRACK:
+            self.currentStopStartTime = 0
+            self.switch_mode(Mode.STOP)
+
     def cmd_nav_callback(self, data):
         """
         loads in goal if different from current goal, and replans
         """
-        if data.x != self.x_g or data.y != self.y_g or data.theta != self.theta_g:
-            if (self.mode == Mode.IDLE):
+        new_goal = self.snap_to_grid((data.x, data.y))
+        print(new_goal)
+        if new_goal[0] != self.x_g or new_goal[1] != self.y_g or data.theta != self.theta_g:
+            if (self.mode == Mode.IDLE or self.mode == Mode.PARK):
                 rospy.logerr("Replanning to new goal %s, %s, %s", data.x, data.y, data.theta)
-                self.x_g = data.x
-                self.y_g = data.y
+                self.x_g = new_goal[0]
+                self.y_g = new_goal[1]
                 self.theta_g = data.theta
-                self.replan(True)
+                self.lastPlanSuccess = self.replan(True)
+        elif not self.lastPlanSuccess:
+            rospy.logerr("Last planning failed, Replanning to new goal %s, %s, %s", data.x, data.y, data.theta)
+            self.x_g = new_goal[0]
+            self.y_g = new_goal[1]
+            self.theta_g = data.theta
+            self.lastPlanSuccess = self.replan(True)
 
     def map_md_callback(self, msg):
         """
@@ -145,21 +176,23 @@ class Navigator:
         '''
         After explorer finish, mark space around obstacles unreachable
         '''
+    
         self.allowUpdateMap = False
-        probs = copy.deepcopy(self.map_probs)
+        probs = [p for p in self.map_probs] 
 
         for i in range(self.map_width):
             for j in range(self.map_height):
                 if self.map_probs[i * self.map_width + j] > 90:
-                    probs[(i-1) * self.map_width + j-1] = 100
-                    probs[(i-1) * self.map_width + j] = 100
-                    probs[(i-1) * self.map_width + j+1] = 100
-                    probs[(i) * self.map_width + j-1] = 100
-                    probs[(i) * self.map_width + j] = 100
-                    probs[(i) * self.map_width + j+1] = 100
-                    probs[(i+1) * self.map_width + j-1] = 100
-                    probs[(i+1) * self.map_width + j] = 100
-                    probs[(i+1) * self.map_width + j+1] = 100
+                    for k in range(1, 2):
+                        probs[(i-k) * self.map_width + j-k] = 100
+                        probs[(i-k) * self.map_width + j] = 100
+                        probs[(i-k) * self.map_width + j+k] = 100
+                        probs[(i) * self.map_width + j-k] = 100
+                        probs[(i) * self.map_width + j] = 100
+                        probs[(i) * self.map_width + j+k] = 100
+                        probs[(i+k) * self.map_width + j-k] = 100
+                        probs[(i+k) * self.map_width + j] = 100
+                        probs[(i+k) * self.map_width + j+k] = 100
 
         self.occupancy = StochOccupancyGrid2D(self.map_resolution,
                                                   self.map_width,
@@ -222,7 +255,8 @@ class Navigator:
         return (abs(self.x - self.plan_start[0]) < self.start_pos_thresh and abs(self.y - self.plan_start[1]) < self.start_pos_thresh)
 
     def snap_to_grid(self, x):
-        return (self.plan_resolution*round(x[0]/self.plan_resolution), self.plan_resolution*round(x[1]/self.plan_resolution))
+        return (self.plan_resolution*(int(x[0]/self.plan_resolution)+0.5), 
+            self.plan_resolution*(int(x[1]/self.plan_resolution)+0.5))
 
     def switch_mode(self, new_mode):
         rospy.loginfo("Switching from %s -> %s", self.mode, new_mode)
@@ -295,7 +329,7 @@ class Navigator:
         if not self.occupancy:
             rospy.loginfo("Navigator: replanning canceled, waiting for occupancy map.")
             self.switch_mode(Mode.IDLE)
-            return
+            return False
 
         # Attempt to plan a path
         state_min = self.snap_to_grid((-self.plan_horizon, -self.plan_horizon))
@@ -313,7 +347,7 @@ class Navigator:
         success =  problem.solve()
         if not success:
             rospy.loginfo("Planning failed")
-            return
+            return False
         rospy.loginfo("Planning Succeeded")
 
         planned_path = problem.path
@@ -341,7 +375,7 @@ class Navigator:
         if len(planned_path) < 4:
             rospy.loginfo("Path too short to track")
             self.switch_mode(Mode.PARK)
-            return
+            return False
 
         # Smooth and generate a trajectory
         traj_new, t_new = compute_smoothed_traj(planned_path, self.v_des, self.spline_alpha, self.traj_dt)
@@ -359,7 +393,7 @@ class Navigator:
             if t_remaining_new > t_remaining_curr:
                 rospy.loginfo("New plan rejected (longer duration than current plan)")
                 self.publish_smoothed_path(traj_new, self.nav_smoothed_path_rej_pub)
-                return
+                return False
 
         # Otherwise follow the new plan
         self.publish_planned_path(planned_path, self.nav_planned_path_pub)
@@ -377,10 +411,11 @@ class Navigator:
         if not self.aligned():
             rospy.loginfo("Not aligned with start direction")
             self.switch_mode(Mode.ALIGN)
-            return
+            return False
 
         rospy.loginfo("Ready to track")
-        self.switch_mode(Mode.TRACK)
+        #self.switch_mode(Mode.TRACK)
+        return True
 
     def run(self):
         rate = rospy.Rate(10) # 10 Hz
@@ -398,7 +433,7 @@ class Navigator:
                 self.switch_mode(Mode.IDLE)
                 print e
                 pass
-
+            # rospy.loginfo("current state %s %s %s", self.x, self.y, self.theta)
             # STATE MACHINE LOGIC
             # some transitions handled by callbacks
             if self.mode == Mode.IDLE:
@@ -416,6 +451,14 @@ class Navigator:
                 elif (rospy.get_rostime() - self.current_plan_start_time).to_sec() > self.current_plan_duration:
                     rospy.loginfo("replanning because out of time")
                     self.replan() # we aren't near the goal but we thought we should have been, so replan
+            elif self.mode == Mode.STOP:
+                print("I found a cat!")
+                if self.currentStopStartTime == 0:
+                    self.currentStopStartTime = rospy.get_rostime()
+                #self.stopTime = self.stopTime + 1
+                if (rospy.get_rostime() - self.currentStopStartTime).to_sec() > self.stop_time:
+                    self.currentCrossStartTime = rospy.get_rostime()
+                    self.switch_mode(Mode.TRACK)
             elif self.mode == Mode.PARK:
                 try:
                     if self.at_goal():
